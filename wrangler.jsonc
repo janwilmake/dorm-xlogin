@@ -13,7 +13,7 @@
     "X_CLIENT_ID": "MWlyVUFQWm5fN01qWTlnaVlBbmY6MTpjaQ",
     "X_REDIRECT_URI": "https://login.xymake.com/callback",
     "LOGIN_REDIRECT_URI": "/dashboard",
-    "STRIPE_PUBLISHABLE_KEY": "",
-    "STRIPE_PAYMENT_LINK_ID": ""
+    "STRIPE_PUBLISHABLE_KEY": "pk_live_51OByVPHdjTpW3q7iqVMf1htAJOQ9If61YZYQlDMc2vhx0XSgqu4Tpfpb6t4pRFJDWhJ7ZqdwMsnQn9RtDuztnnQA00NorRRKLl",
+    "STRIPE_PAYMENT_LINK_ID": "plink_1REsLrHdjTpW3q7imVympkT7"
   }
 }

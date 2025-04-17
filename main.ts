@@ -1,4 +1,5 @@
-import { DORM, createClient, DBConfig } from "dormroom/DORM";
+import { DORM, createClient } from "dormroom/DORM";
+import { Stripe } from "stripe";
 export { DORM };
 export interface Env {
   X_CLIENT_ID: string;
@@ -6,6 +7,11 @@ export interface Env {
   X_REDIRECT_URI: string;
   LOGIN_REDIRECT_URI: string;
   X_LOGIN_DO: DurableObjectNamespace;
+  // Added Stripe environment variables
+  STRIPE_WEBHOOK_SIGNING_SECRET: string;
+  STRIPE_SECRET: string;
+  STRIPE_PUBLISHABLE_KEY: string;
+  STRIPE_PAYMENT_LINK_ID: string;
 }
 
 export const html = (strings: TemplateStringsArray, ...values: any[]) => {
@@ -51,6 +57,41 @@ function getCookieValue(
   return matches ? decodeURIComponent(matches[1]) : null;
 }
 
+// Added from stripeflare for Stripe webhook processing
+const streamToBuffer = async (
+  readableStream: ReadableStream<Uint8Array>,
+): Promise<Uint8Array> => {
+  const chunks: Uint8Array[] = [];
+  const reader = readableStream.getReader();
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  // Calculate the total length
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+
+  // Create a new Uint8Array with the total length
+  const result = new Uint8Array(totalLength);
+
+  // Copy each chunk into the result array
+  let position = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, position);
+    position += chunk.length;
+  }
+
+  return result;
+};
+
 export default {
   fetch: async (request: Request, env: Env, ctx: ExecutionContext) => {
     // Initialize DORM client for user database
@@ -65,7 +106,9 @@ export default {
           access_token TEXT NOT NULL,
           refresh_token TEXT,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          has_subscription BOOLEAN DEFAULT FALSE,
+          subscription_status TEXT
         )
         `,
       ],
@@ -94,6 +137,192 @@ export default {
     const cookie = request.headers.get("Cookie");
     const xAccessToken = getCookieValue(cookie, "x_access_token");
     const accessToken = xAccessToken || url.searchParams.get("apiKey");
+
+    // Handle Stripe webhook
+    if (url.pathname === "/stripe-webhook") {
+      if (!request.body) {
+        return new Response(
+          JSON.stringify({ isSuccessful: false, message: "No body" }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const rawBody = await streamToBuffer(request.body);
+      // Convert Uint8Array to string using TextDecoder
+      const rawBodyString = new TextDecoder().decode(rawBody);
+
+      const stripeWebhookSigningSecret = env.STRIPE_WEBHOOK_SIGNING_SECRET;
+      const stripeSecret = env.STRIPE_SECRET;
+      const stripePublishableKey = env.STRIPE_PUBLISHABLE_KEY;
+      const paymentLinkId = env.STRIPE_PAYMENT_LINK_ID;
+
+      if (
+        !stripeWebhookSigningSecret ||
+        !stripeSecret ||
+        !stripePublishableKey ||
+        !paymentLinkId
+      ) {
+        console.log("NO STRIPE CREDENTIALS", {
+          stripePublishableKey,
+          stripeSecret,
+          stripeWebhookSigningSecret,
+        });
+        return new Response(
+          JSON.stringify({ isSuccessful: false, message: "No stripe creds" }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const stripe = new Stripe(stripeSecret, {
+        apiVersion: "2025-03-31.basil",
+      });
+
+      const stripeSignature = request.headers.get("stripe-signature");
+
+      if (!stripeSignature) {
+        console.log("NO stripe signature");
+        return new Response(
+          JSON.stringify({ isSuccessful: false, message: "No signature" }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      let event: Stripe.Event | undefined = undefined;
+
+      try {
+        event = await stripe.webhooks.constructEventAsync(
+          rawBodyString,
+          stripeSignature,
+          stripeWebhookSigningSecret,
+        );
+      } catch (err) {
+        console.warn(`Error web hook`, err);
+        return new Response(`webhook error ${String(err)}`, { status: 400 });
+      }
+
+      if (event.type === "checkout.session.completed") {
+        const {
+          payment_status,
+          mode,
+          amount_total,
+          payment_link,
+          customer_details,
+          currency,
+        } = event.data.object;
+
+        if (payment_link !== env.STRIPE_PAYMENT_LINK_ID) {
+          return new Response("No payment link found", { status: 400 });
+        }
+
+        if (payment_status !== "paid" || !amount_total) {
+          return new Response("Payment not paid yet", { status: 400 });
+        }
+
+        if (!customer_details) {
+          return new Response("No customer details provided", { status: 400 });
+        }
+
+        if (mode === "subscription" || mode === "setup") {
+          return new Response("Not supported yet", { status: 400 });
+        }
+
+        if (amount_total < 50) {
+          // NB: Could also check currency here
+          return new Response("Paid less than $0.50", { status: 400 });
+        }
+
+        const { email, name } = customer_details;
+
+        // Update user record with subscription status
+        if (email) {
+          // Try to find user with this email
+          try {
+            // Find users with X profile that matches this email
+            const usersResult = await client.query(
+              "SELECT * FROM users WHERE username = ?",
+              {},
+              // Simple matching heuristic - could be improved
+              email.split("@")[0],
+            );
+
+            if (
+              usersResult.ok &&
+              usersResult.json &&
+              usersResult.json.length > 0
+            ) {
+              const user = usersResult.json[0];
+
+              // Update user with subscription info
+              await client.update(
+                "users",
+                {
+                  has_subscription: true,
+                  subscription_status: "active",
+                },
+                { id: user.id },
+              );
+
+              return new Response(
+                JSON.stringify({
+                  success: true,
+                  message: `User ${name} (${email}) subscription activated`,
+                }),
+                { headers: { "Content-Type": "application/json" } },
+              );
+            }
+          } catch (error) {
+            console.error("Error updating user subscription:", error);
+          }
+        }
+
+        // If we couldn't find a matching user or there was an error
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: `Payment processed for ${name} <${email}> (${amount_total} cents), but couldn't find matching user account.`,
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      // subscription type events
+      if (
+        event.type === "customer.subscription.deleted" ||
+        event.type === "customer.subscription.updated" ||
+        event.type === "customer.subscription.paused"
+      ) {
+        const subscription = event.data.object;
+        const customer = subscription.customer as string;
+        const shouldRemoveSubscription =
+          subscription.status === "unpaid" ||
+          subscription.status === "canceled";
+
+        try {
+          // Find customer by Stripe ID
+          // This is simplified - you would need to store Stripe customer IDs in your users table
+          if (shouldRemoveSubscription) {
+            // You would update the user's subscription status here
+            // For now, we'll just return a success response
+            return new Response(
+              JSON.stringify({
+                success: true,
+                message: "Subscription cancelled",
+              }),
+              { headers: { "Content-Type": "application/json" } },
+            );
+          }
+        } catch (error) {
+          console.error("Error handling subscription event:", error);
+        }
+
+        return new Response("OK. No action required");
+      }
+
+      // Not interested in all other events...
+      return new Response(
+        JSON.stringify({ isSuccessful: false, message: "Invalid event" }),
+        { status: 404 },
+      );
+    }
 
     // X Login routes
     if (url.pathname === "/login") {
@@ -215,6 +444,8 @@ export default {
           existingUserResult.json.length > 0
         ) {
           // Update existing user with new tokens and login time
+          // Preserve subscription status if it exists
+          const existingUser = existingUserResult.json[0];
           await client.update(
             "users",
             {
@@ -223,6 +454,9 @@ export default {
               name,
               profile_image_url,
               last_login: new Date().toISOString(),
+              // Keep existing subscription status if it exists
+              has_subscription: existingUser.has_subscription || false,
+              subscription_status: existingUser.subscription_status || null,
             },
             { id },
           );
@@ -235,6 +469,8 @@ export default {
             profile_image_url,
             access_token,
             refresh_token: refresh_token || null,
+            has_subscription: false,
+            subscription_status: null,
           });
         }
 
@@ -388,8 +624,44 @@ export default {
             name: apiUserData.data.name,
             username: apiUserData.data.username,
             profile_image_url: apiUserData.data.profile_image_url,
+            has_subscription: false,
           };
         }
+
+        // Stripe payment button HTML - you'll add your own keys
+        const stripeButton = `
+          <div class="mt-8 max-w-md mx-auto">
+            <h3 class="text-xl font-semibold mb-4 ${
+              userData.has_subscription ? "text-green-400" : ""
+            }">
+              ${
+                userData.has_subscription
+                  ? "✓ Premium Subscription Active"
+                  : "Upgrade to Premium"
+              }
+            </h3>
+            ${
+              !userData.has_subscription
+                ? `
+              <div class="x-border bg-slate-700 rounded-xl p-6 mb-6">
+                <p class="mb-4">Get exclusive features with a premium membership:</p>
+                <ul class="list-disc pl-5 mb-6 text-slate-300">
+                  <li>Advanced analytics</li>
+                  <li>Custom profile themes</li>
+                  <li>Priority support</li>
+                </ul>
+                <div id="stripe-button-container">
+                  <!-- You'll add your Stripe button here -->
+                  <button class="w-full bg-blue-500 hover:bg-blue-600 px-6 py-3 rounded-lg font-medium transition-colors">
+                    Upgrade Now
+                  </button>
+                </div>
+              </div>
+            `
+                : ""
+            }
+          </div>
+        `;
 
         return new Response(
           html`
@@ -404,7 +676,15 @@ export default {
                   body {
                     font-family: "Inter", sans-serif;
                   }
+                  .x-border {
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                  }
                 </style>
+                <!-- You'll need to add your Stripe script here -->
+                <script
+                  async
+                  src="https://js.stripe.com/v3/buy-button.js"
+                ></script>
               </head>
               <body class="text-slate-100">
                 <main class="max-w-6xl mx-auto px-4 py-16">
@@ -429,11 +709,16 @@ export default {
                             ${userData.name}
                           </h2>
                           <p class="text-slate-400">@${userData.username}</p>
+                          ${userData.has_subscription
+                            ? `<p class="text-green-400 mt-1">Premium Member</p>`
+                            : `<p class="text-slate-400 mt-1">Free Plan</p>`}
                         </div>
                       </div>
                     </div>
 
-                    <div class="flex justify-center gap-4">
+                    ${stripeButton}
+
+                    <div class="flex justify-center gap-4 mt-8">
                       <a
                         href="/"
                         class="bg-blue-500 hover:bg-blue-600 px-6 py-3 rounded-lg font-medium transition-colors"

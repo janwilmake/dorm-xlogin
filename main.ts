@@ -120,11 +120,11 @@ export default {
 
       headers.append(
         "Set-Cookie",
-        `x_oauth_state=${state}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=600`,
+        `x_oauth_state=${state}; HttpOnly; Domain=xymake.com; Path=/; Secure; SameSite=Lax; Max-Age=600`,
       );
       headers.append(
         "Set-Cookie",
-        `x_code_verifier=${codeVerifier}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=600`,
+        `x_code_verifier=${codeVerifier}; HttpOnly; Domain=xymake.com; Path=/; Secure; SameSite=Lax; Max-Age=600`,
       );
 
       return new Response("Redirecting", {
@@ -251,13 +251,13 @@ export default {
           "Set-Cookie",
           `x_access_token=${encodeURIComponent(
             access_token,
-          )}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=34560000`,
+          )}; HttpOnly; Domain=xymake.com; Path=/; Secure; SameSite=Lax; Max-Age=34560000`,
         );
         headers.append(
           "Set-Cookie",
           `x_user_id=${encodeURIComponent(
             id,
-          )}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=34560000`,
+          )}; HttpOnly; Domain=xymake.com; Path=/; Secure; SameSite=Lax; Max-Age=34560000`,
         );
         headers.append("Set-Cookie", `x_oauth_state=; Max-Age=0; Path=/`);
         headers.append("Set-Cookie", `x_code_verifier=; Max-Age=0; Path=/`);

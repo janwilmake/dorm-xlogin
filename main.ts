@@ -1,26 +1,6 @@
 import { DORM, createClient, DBConfig } from "dormroom/DORM";
 export { DORM };
 
-// Database configuration for X Login users
-const dbConfig: DBConfig = {
-  statements: [
-    `
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      username TEXT NOT NULL,
-      name TEXT,
-      profile_image_url TEXT,
-      access_token TEXT NOT NULL,
-      refresh_token TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    `,
-  ],
-  version: "v1",
-  authSecret: "x-login-secret-key", // Change in production
-};
-
 export interface Env {
   X_CLIENT_ID: string;
   X_CLIENT_SECRET: string;
@@ -75,7 +55,24 @@ function getCookieValue(
 export default {
   fetch: async (request: Request, env: Env, ctx: ExecutionContext) => {
     // Initialize DORM client for user database
-    const client = createClient(env.X_LOGIN_DO, dbConfig);
+    const client = createClient(env.X_LOGIN_DO, {
+      statements: [
+        `
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL,
+          name TEXT,
+          profile_image_url TEXT,
+          access_token TEXT NOT NULL,
+          refresh_token TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        `,
+      ],
+      version: "v1",
+      authSecret: env.X_CLIENT_SECRET,
+    });
     const url = new URL(request.url);
     const method = request.method;
 
@@ -89,8 +86,8 @@ export default {
 
     // Handle DB middleware requests (for exploring the DB)
     const middlewareResponse = await client.middleware(request, {
-      prefix: "/api/db",
-      secret: dbConfig.authSecret,
+      prefix: "/admin",
+      secret: env.X_CLIENT_SECRET,
     });
     if (middlewareResponse) return middlewareResponse;
 

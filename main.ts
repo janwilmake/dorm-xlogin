@@ -125,7 +125,7 @@ export default {
       );
 
       return new Response("Redirecting", {
-        status: 302,
+        status: 307,
         headers,
       });
     }
@@ -240,6 +240,7 @@ export default {
         }
 
         const headers = new Headers({
+          ...getCorsHeaders(),
           Location: url.origin + (env.LOGIN_REDIRECT_URI || "/"),
         });
 
@@ -261,10 +262,7 @@ export default {
 
         return new Response("Redirecting", {
           status: 307,
-          headers: {
-            ...headers,
-            ...getCorsHeaders(),
-          },
+          headers,
         });
       } catch (error) {
         return new Response(

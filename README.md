@@ -1,3 +1,9 @@
+This is a template, made from first principles, for:
+
+- Secure login via X OAuth
+- User managment via dorm (powered by [outerbase](https://outerbase.com))
+- Stripe payment processing (powered by [stripeflare](https://github.com/janwilmake/stripeflare))
+
 To use this:
 
 - make a client at https://developer.x.com

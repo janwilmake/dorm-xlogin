@@ -1,0 +1,16 @@
+{
+  "name": "xymake_login",
+  "main": "main.ts",
+  "assets": { "directory": "./public" },
+  "compatibility_date": "2024-04-15",
+  "dev": { "port": 3000 },
+  "route": { "custom_domain": true, "pattern": "login.xymake.com" },
+  "durable_objects": {
+    "bindings": [{ "name": "X_LOGIN_DO", "class_name": "DORM" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DORM"] }],
+  "vars": {
+    "X_REDIRECT_URI": "https://xymake.com/callback",
+    "LOGIN_REDIRECT_URI": "https://login.xymake/dashboard"
+  }
+}

@@ -7,7 +7,6 @@ export interface Env {
   X_REDIRECT_URI: string;
   LOGIN_REDIRECT_URI: string;
   X_LOGIN_DO: DurableObjectNamespace;
-  // Added Stripe environment variables
   STRIPE_WEBHOOK_SIGNING_SECRET: string;
   STRIPE_SECRET: string;
   STRIPE_PUBLISHABLE_KEY: string;
@@ -651,10 +650,12 @@ export default {
                   <li>Priority support</li>
                 </ul>
                 <div id="stripe-button-container">
-                  <!-- You'll add your Stripe button here -->
-                  <button class="w-full bg-blue-500 hover:bg-blue-600 px-6 py-3 rounded-lg font-medium transition-colors">
-                    Upgrade Now
-                  </button>
+                   <div class="mb-8">
+            <stripe-buy-button buy-button-id="buy_btn_1REsM3HdjTpW3q7ir46YIEPf"
+                publishable-key="pk_live_51OByVPHdjTpW3q7iqVMf1htAJOQ9If61YZYQlDMc2vhx0XSgqu4Tpfpb6t4pRFJDWhJ7ZqdwMsnQn9RtDuztnnQA00NorRRKLl">
+            </stripe-buy-button>
+        </div>
+
                 </div>
               </div>
             `
@@ -668,6 +669,10 @@ export default {
             <!DOCTYPE html>
             <html lang="en" class="bg-slate-900">
               <head>
+                <script
+                  async
+                  src="https://js.stripe.com/v3/buy-button.js"
+                ></script>
                 <meta charset="utf8" />
                 <script src="https://cdn.tailwindcss.com"></script>
                 <title>X User Dashboard</title>
@@ -680,7 +685,6 @@ export default {
                     border: 1px solid rgba(255, 255, 255, 0.1);
                   }
                 </style>
-                <!-- You'll need to add your Stripe script here -->
                 <script
                   async
                   src="https://js.stripe.com/v3/buy-button.js"

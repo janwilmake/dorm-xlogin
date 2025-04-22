@@ -132,17 +132,29 @@ export default {
       });
     }
 
+    // TODO: Make DORM in a way that this logic isn't so complex. Connection with middleware should be more staight forward for the admin
+    // We want to use the userID db if the prefix is /admin/[id]
+    const dbName = url.pathname.startsWith("/admin/")
+      ? url.pathname.split("/")[2]
+      : undefined;
+    const prefix = `/admin/${dbName}`;
+
     // Initialize DORM client for user database
     const client = createClient(env.X_LOGIN_DO, config, {
       ctx,
-      name: userId || ROOT_DB_NAME,
-      mirrorName: userId ? ROOT_DB_NAME : undefined,
+      name: dbName || userId || ROOT_DB_NAME,
+      mirrorName:
+        dbName !== ROOT_DB_NAME
+          ? ROOT_DB_NAME
+          : userId
+          ? ROOT_DB_NAME
+          : undefined,
       locationHint: userId ? undefined : "enam",
     });
 
     // Handle DB middleware requests (for exploring the DB)
     const middlewareResponse = await client.middleware(request, {
-      prefix: "/admin",
+      prefix,
       secret: env.X_CLIENT_SECRET,
     });
     if (middlewareResponse) return middlewareResponse;

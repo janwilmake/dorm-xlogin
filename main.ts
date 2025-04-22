@@ -91,31 +91,35 @@ const streamToBuffer = async (
   return result;
 };
 
+const config = {
+  statements: [
+    `
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    name TEXT,
+    profile_image_url TEXT,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    has_subscription BOOLEAN DEFAULT FALSE,
+    subscription_status TEXT
+  )
+  `,
+  ],
+  version: "v1",
+};
+
 export default {
   fetch: async (request: Request, env: Env, ctx: ExecutionContext) => {
-    // Initialize DORM client for user database
-    const client = createClient(env.X_LOGIN_DO, {
-      statements: [
-        `
-        CREATE TABLE IF NOT EXISTS users (
-          id TEXT PRIMARY KEY,
-          username TEXT NOT NULL,
-          name TEXT,
-          profile_image_url TEXT,
-          access_token TEXT NOT NULL,
-          refresh_token TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          has_subscription BOOLEAN DEFAULT FALSE,
-          subscription_status TEXT
-        )
-        `,
-      ],
-      version: "v1",
-      authSecret: env.X_CLIENT_SECRET,
-    });
+    // Deconstruct Cookies
     const url = new URL(request.url);
     const method = request.method;
+    const cookie = request.headers.get("Cookie");
+    const xAccessToken = getCookieValue(cookie, "x_access_token");
+    const userId = getCookieValue(cookie, "x_user_id");
+    const accessToken = xAccessToken || url.searchParams.get("apiKey");
 
     // Handle CORS preflight requests
     if (method === "OPTIONS") {
@@ -125,6 +129,14 @@ export default {
       });
     }
 
+    // Initialize DORM client for user database
+    const client = createClient(env.X_LOGIN_DO, config, {
+      ctx,
+      name: userId || "root",
+      mirrorName: userId ? "root" : undefined,
+      locationHint: userId ? undefined : "enam",
+    });
+
     // Handle DB middleware requests (for exploring the DB)
     const middlewareResponse = await client.middleware(request, {
       prefix: "/admin",
@@ -133,9 +145,6 @@ export default {
     if (middlewareResponse) return middlewareResponse;
 
     // Extract access token from cookies or query params
-    const cookie = request.headers.get("Cookie");
-    const xAccessToken = getCookieValue(cookie, "x_access_token");
-    const accessToken = xAccessToken || url.searchParams.get("apiKey");
 
     // Handle Stripe webhook
     if (url.pathname === "/stripe-webhook") {
@@ -434,8 +443,18 @@ export default {
         const userData: any = await userResponse.json();
         const { id, name, username, profile_image_url } = userData.data;
 
+        if (!id) {
+          throw new Error(`X API error: no ID found`);
+        }
+
+        const userClient = createClient(env.X_LOGIN_DO, config, {
+          ctx,
+          name: id,
+          mirrorName: "root",
+        });
+
         // Store or update user in database
-        const existingUserResult = await client.select("users", { id });
+        const existingUserResult = await userClient.select("users", { id });
 
         if (
           existingUserResult.ok &&
@@ -445,7 +464,7 @@ export default {
           // Update existing user with new tokens and login time
           // Preserve subscription status if it exists
           const existingUser = existingUserResult.json[0];
-          await client.update(
+          await userClient.update(
             "users",
             {
               access_token,
@@ -461,7 +480,7 @@ export default {
           );
         } else {
           // Create new user
-          await client.insert("users", {
+          await userClient.insert("users", {
             id,
             username,
             name,
@@ -539,8 +558,6 @@ export default {
 
     // Logout route
     if (url.pathname === "/logout") {
-      const userId = getCookieValue(cookie, "x_user_id");
-
       // Update last_login in the database if we have the user ID
       if (userId) {
         await client.update(
@@ -569,7 +586,7 @@ export default {
 
     // Dashboard route - show user profile if logged in
     if (url.pathname === "/dashboard") {
-      if (!accessToken) {
+      if (!accessToken || !userId) {
         // Redirect to login if no access token
         return new Response("Redirecting to login...", {
           status: 302,
@@ -582,19 +599,16 @@ export default {
 
       try {
         // Get user ID from cookie
-        const userId = getCookieValue(cookie, "x_user_id");
         let userData;
 
         // Try to get user data from database first
-        if (userId) {
-          const dbUserResult = await client.select("users", { id: userId });
-          if (
-            dbUserResult.ok &&
-            dbUserResult.json &&
-            dbUserResult.json.length > 0
-          ) {
-            userData = dbUserResult.json[0];
-          }
+        const dbUserResult = await client.select("users", { id: userId });
+        if (
+          dbUserResult.ok &&
+          dbUserResult.json &&
+          dbUserResult.json.length > 0
+        ) {
+          userData = dbUserResult.json[0];
         }
 
         // If not found in DB or no userId cookie, fetch from API

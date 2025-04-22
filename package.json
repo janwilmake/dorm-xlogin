@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "dormroom": "^0.0.6",
+    "dormroom": "^0.0.8",
     "stripe": "^18.0.0"
   },
   "devDependencies": {

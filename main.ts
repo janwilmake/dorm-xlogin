@@ -109,8 +109,10 @@ const config = {
   )
   `,
   ],
-  version: "v1",
+  version: "v2",
 };
+
+const ROOT_DB_NAME = "db:root";
 
 export default {
   fetch: async (request: Request, env: Env, ctx: ExecutionContext) => {
@@ -133,8 +135,8 @@ export default {
     // Initialize DORM client for user database
     const client = createClient(env.X_LOGIN_DO, config, {
       ctx,
-      name: userId || "root",
-      mirrorName: userId ? "root" : undefined,
+      name: userId || ROOT_DB_NAME,
+      mirrorName: userId ? ROOT_DB_NAME : undefined,
       locationHint: userId ? undefined : "enam",
     });
 
@@ -451,8 +453,8 @@ export default {
         // NB: Gotta recreate client since we need to connect with the userId unique db, with root as mirror
         const userClient = createClient(env.X_LOGIN_DO, config, {
           ctx,
-          name: id,
-          mirrorName: "root",
+          name: String(id),
+          mirrorName: ROOT_DB_NAME,
         });
 
         // Store or update user in database
@@ -466,7 +468,8 @@ export default {
           // Update existing user with new tokens and login time
           // Preserve subscription status if it exists
           const existingUser = existingUserResult.json[0];
-          await userClient.update(
+
+          const result = await userClient.update(
             "users",
             {
               access_token,
@@ -482,7 +485,7 @@ export default {
           );
         } else {
           // Create new user
-          await userClient.insert("users", {
+          const insert = await userClient.insert("users", {
             id,
             username,
             name,

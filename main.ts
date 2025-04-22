@@ -447,6 +447,7 @@ export default {
           throw new Error(`X API error: no ID found`);
         }
 
+        // NB: Gotta recreate client since we need to connect with the userId unique db, with root as mirror
         const userClient = createClient(env.X_LOGIN_DO, config, {
           ctx,
           name: id,

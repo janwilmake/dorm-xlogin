@@ -1,5 +1,6 @@
 import { DORM, createClient } from "dormroom/DORM";
 import { Stripe } from "stripe";
+
 export { DORM };
 export interface Env {
   X_CLIENT_ID: string;
@@ -598,52 +599,24 @@ export default {
         });
       }
 
-      try {
-        // Get user ID from cookie
-        let userData;
+      // Try to get user data from database with matching access_token
 
-        // Try to get user data from database first
-        const dbUserResult = await client.select("users", { id: userId });
-        if (
-          dbUserResult.ok &&
-          dbUserResult.json &&
-          dbUserResult.json.length > 0
-        ) {
-          userData = dbUserResult.json[0];
-        }
+      const dbUserResult = await client.select("users", {
+        id: userId,
+        access_token: accessToken,
+      });
 
-        // If not found in DB or no userId cookie, fetch from API
-        if (!userData) {
-          const userResponse = await fetch(
-            "https://api.x.com/2/users/me?user.fields=profile_image_url",
-            {
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json",
-              },
-            },
-          );
+      if (!dbUserResult.ok || !dbUserResult.json?.length) {
+        return new Response("Redirecting to login...", {
+          status: 302,
+          headers: { Location: "/login", ...getCorsHeaders() },
+        });
+      }
 
-          if (!userResponse.ok) {
-            throw new Error(
-              `X API error: ${
-                userResponse.status
-              } ${await userResponse.text()}`,
-            );
-          }
+      const userData = dbUserResult.json[0];
 
-          const apiUserData: any = await userResponse.json();
-          userData = {
-            id: apiUserData.data.id,
-            name: apiUserData.data.name,
-            username: apiUserData.data.username,
-            profile_image_url: apiUserData.data.profile_image_url,
-            has_subscription: false,
-          };
-        }
-
-        // Stripe payment button HTML - you'll add your own keys
-        const stripeButton = `
+      // Stripe payment button HTML - you'll add your own keys
+      const stripeButton = `
           <div class="mt-8 max-w-md mx-auto">
             <h3 class="text-xl font-semibold mb-4 ${
               userData.has_subscription ? "text-green-400" : ""
@@ -679,124 +652,88 @@ export default {
           </div>
         `;
 
-        return new Response(
-          html`
-            <!DOCTYPE html>
-            <html lang="en" class="bg-slate-900">
-              <head>
-                <script
-                  async
-                  src="https://js.stripe.com/v3/buy-button.js"
-                ></script>
-                <meta charset="utf8" />
-                <script src="https://cdn.tailwindcss.com"></script>
-                <title>X User Dashboard</title>
-                <style>
-                  @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
-                  body {
-                    font-family: "Inter", sans-serif;
-                  }
-                  .x-border {
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                  }
-                </style>
-                <script
-                  async
-                  src="https://js.stripe.com/v3/buy-button.js"
-                ></script>
-              </head>
-              <body class="text-slate-100">
-                <main class="max-w-6xl mx-auto px-4 py-16">
-                  <div class="text-center mb-20">
-                    <h1
-                      class="text-5xl font-bold mb-6 bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent"
-                    >
-                      X Dashboard
-                    </h1>
+      return new Response(
+        html`
+          <!DOCTYPE html>
+          <html lang="en" class="bg-slate-900">
+            <head>
+              <script
+                async
+                src="https://js.stripe.com/v3/buy-button.js"
+              ></script>
+              <meta charset="utf8" />
+              <script src="https://cdn.tailwindcss.com"></script>
+              <title>X User Dashboard</title>
+              <style>
+                @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
+                body {
+                  font-family: "Inter", sans-serif;
+                }
+                .x-border {
+                  border: 1px solid rgba(255, 255, 255, 0.1);
+                }
+              </style>
+              <script
+                async
+                src="https://js.stripe.com/v3/buy-button.js"
+              ></script>
+            </head>
+            <body class="text-slate-100">
+              <main class="max-w-6xl mx-auto px-4 py-16">
+                <div class="text-center mb-20">
+                  <h1
+                    class="text-5xl font-bold mb-6 bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent"
+                  >
+                    X Dashboard
+                  </h1>
 
-                    <div
-                      class="max-w-md mx-auto bg-slate-800 rounded-xl p-6 mb-8"
-                    >
-                      <div class="flex items-center gap-4">
-                        <img
-                          src="${userData.profile_image_url}"
-                          alt="Profile"
-                          class="w-16 h-16 rounded-full"
-                        />
-                        <div class="text-left">
-                          <h2 class="text-xl font-semibold">
-                            ${userData.name}
-                          </h2>
-                          <p class="text-slate-400">@${userData.username}</p>
-                          ${userData.has_subscription
-                            ? `<p class="text-green-400 mt-1">Premium Member</p>`
-                            : `<p class="text-slate-400 mt-1">Free Plan</p>`}
-                        </div>
+                  <div
+                    class="max-w-md mx-auto bg-slate-800 rounded-xl p-6 mb-8"
+                  >
+                    <div class="flex items-center gap-4">
+                      <img
+                        src="${userData.profile_image_url}"
+                        alt="Profile"
+                        class="w-16 h-16 rounded-full"
+                      />
+                      <div class="text-left">
+                        <h2 class="text-xl font-semibold">${userData.name}</h2>
+                        <p class="text-slate-400">@${userData.username}</p>
+                        ${userData.has_subscription
+                          ? `<p class="text-green-400 mt-1">Premium Member</p>`
+                          : `<p class="text-slate-400 mt-1">Free Plan</p>`}
                       </div>
                     </div>
-
-                    ${stripeButton}
-
-                    <div class="flex justify-center gap-4 mt-8">
-                      <a
-                        href="/"
-                        class="bg-blue-500 hover:bg-blue-600 px-6 py-3 rounded-lg font-medium transition-colors"
-                      >
-                        Home
-                      </a>
-                      <a
-                        href="/logout"
-                        class="border border-blue-500 text-blue-500 px-6 py-3 rounded-lg font-medium hover:bg-blue-500/10 transition-colors"
-                      >
-                        Logout
-                      </a>
-                    </div>
                   </div>
-                </main>
-              </body>
-            </html>
-          `,
-          {
-            headers: {
-              "content-type": "text/html",
-              ...getCorsHeaders(),
-            },
+
+                  ${stripeButton}
+
+                  <div class="flex justify-center gap-4 mt-8">
+                    <a
+                      href="/"
+                      class="bg-blue-500 hover:bg-blue-600 px-6 py-3 rounded-lg font-medium transition-colors"
+                    >
+                      Home
+                    </a>
+                    <a
+                      href="/logout"
+                      class="border border-blue-500 text-blue-500 px-6 py-3 rounded-lg font-medium hover:bg-blue-500/10 transition-colors"
+                    >
+                      Logout
+                    </a>
+                  </div>
+                </div>
+              </main>
+            </body>
+          </html>
+        `,
+        {
+          headers: {
+            "content-type": "text/html",
+            ...getCorsHeaders(),
           },
-        );
-      } catch (error) {
-        // If error accessing profile, clear cookies and redirect to login
-        return new Response(
-          html`
-            <!DOCTYPE html>
-            <html lang="en">
-              <head>
-                <title>Dashboard Error</title>
-              </head>
-              <body>
-                <h1>Error Loading Dashboard</h1>
-                <p>
-                  ${error instanceof Error ? error.message : "Unknown error"}
-                </p>
-                <p>Your session may have expired. Please login again.</p>
-                <script>
-                  setTimeout(() => (window.location.href = "/login"), 3000);
-                </script>
-              </body>
-            </html>
-          `,
-          {
-            status: 401,
-            headers: {
-              "content-type": "text/html",
-              "Set-Cookie": [
-                "x_access_token=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax",
-                "x_user_id=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax",
-              ].join(", "),
-              ...getCorsHeaders(),
-            },
-          },
-        );
-      }
+        },
+      );
     }
 
     return new Response("Not found", { status: 404 });

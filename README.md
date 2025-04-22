@@ -19,4 +19,5 @@ To use this:
 
 TODO:
 
+- refresh access_token with refresh_token when needed
 - Add logic to generate payment-link bound to the user for correct user matching. Now this is a great boilerplate that allows easy creation of apps with subscribers or features behind one-time payment.

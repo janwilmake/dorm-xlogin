@@ -1,6 +1,6 @@
 This is a template (under 5k tokens in size), made from first principles, for:
 
-[![janwilmake/xymake.template context](https://badge.forgithub.com/janwilmake/xymake.template)](https://uithub.com/janwilmake/xymake.template)
+[![janwilmake/xymake.template context](https://badge.forgithub.com/janwilmake/xymake.template)](https://uithub.com/janwilmake/xymake.oauth-stripe-template)
 
 - Secure login via X OAuth
 - User managment via dorm (powered by [outerbase](https://outerbase.com))
@@ -19,5 +19,17 @@ To use this:
 
 TODO:
 
-- refresh access_token with refresh_token when needed
-- Add logic to generate payment-link bound to the user for correct user matching. Now this is a great boilerplate that allows easy creation of apps with subscribers or features behind one-time payment.
+- ✅ successfully have one db per user but with a global mirror-db
+
+- ✅ Remove stripe webhook into separate handler for now. This'd be a different middleware.
+
+- Make `x-oauth-template` fully oauth2.1 compatible. Use `oauth21-mcp-openapi` as guideline. Make this a middleware that takes the dorm client, and assumes a table structure.
+
+- Implement spec of https://murlprotocol.com with this template as middleware, such that the flow becomes:
+
+  - x login -> stripe payment -> dashboard with balance
+  - login with monetaryurl with permissions
+
+- from uithub dashboard, add monetaryurl full permission to balance via xlogin --> stripe payment
+
+- when an uithub request is made, a murl is made first and send along into the url chain. every server deducts the desired balance afterwards.

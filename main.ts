@@ -1,5 +1,4 @@
 import { DORM, createClient } from "dormroom/DORM";
-import { Stripe } from "stripe";
 
 export { DORM };
 export interface Env {
@@ -8,10 +7,6 @@ export interface Env {
   X_REDIRECT_URI: string;
   LOGIN_REDIRECT_URI: string;
   X_LOGIN_DO: DurableObjectNamespace;
-  STRIPE_WEBHOOK_SIGNING_SECRET: string;
-  STRIPE_SECRET: string;
-  STRIPE_PUBLISHABLE_KEY: string;
-  STRIPE_PAYMENT_LINK_ID: string;
 }
 
 export const html = (strings: TemplateStringsArray, ...values: any[]) => {
@@ -56,41 +51,6 @@ function getCookieValue(
   const matches = cookieString.match(new RegExp(`${name}=([^;]+)`));
   return matches ? decodeURIComponent(matches[1]) : null;
 }
-
-// Added from stripeflare for Stripe webhook processing
-const streamToBuffer = async (
-  readableStream: ReadableStream<Uint8Array>,
-): Promise<Uint8Array> => {
-  const chunks: Uint8Array[] = [];
-  const reader = readableStream.getReader();
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  // Calculate the total length
-  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-
-  // Create a new Uint8Array with the total length
-  const result = new Uint8Array(totalLength);
-
-  // Copy each chunk into the result array
-  let position = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, position);
-    position += chunk.length;
-  }
-
-  return result;
-};
 
 const config = {
   statements: [
@@ -147,8 +107,8 @@ export default {
         dbName !== ROOT_DB_NAME
           ? ROOT_DB_NAME
           : userId
-          ? ROOT_DB_NAME
-          : undefined,
+            ? ROOT_DB_NAME
+            : undefined,
       locationHint: userId ? undefined : "enam",
     });
 
@@ -158,194 +118,6 @@ export default {
       secret: env.X_CLIENT_SECRET,
     });
     if (middlewareResponse) return middlewareResponse;
-
-    // Extract access token from cookies or query params
-
-    // Handle Stripe webhook
-    if (url.pathname === "/stripe-webhook") {
-      if (!request.body) {
-        return new Response(
-          JSON.stringify({ isSuccessful: false, message: "No body" }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      }
-
-      const rawBody = await streamToBuffer(request.body);
-      // Convert Uint8Array to string using TextDecoder
-      const rawBodyString = new TextDecoder().decode(rawBody);
-
-      const stripeWebhookSigningSecret = env.STRIPE_WEBHOOK_SIGNING_SECRET;
-      const stripeSecret = env.STRIPE_SECRET;
-      const stripePublishableKey = env.STRIPE_PUBLISHABLE_KEY;
-      const paymentLinkId = env.STRIPE_PAYMENT_LINK_ID;
-
-      if (
-        !stripeWebhookSigningSecret ||
-        !stripeSecret ||
-        !stripePublishableKey ||
-        !paymentLinkId
-      ) {
-        console.log("NO STRIPE CREDENTIALS", {
-          stripePublishableKey,
-          stripeSecret,
-          stripeWebhookSigningSecret,
-        });
-        return new Response(
-          JSON.stringify({ isSuccessful: false, message: "No stripe creds" }),
-          { status: 500, headers: { "Content-Type": "application/json" } },
-        );
-      }
-
-      const stripe = new Stripe(stripeSecret, {
-        apiVersion: "2025-03-31.basil",
-      });
-
-      const stripeSignature = request.headers.get("stripe-signature");
-
-      if (!stripeSignature) {
-        console.log("NO stripe signature");
-        return new Response(
-          JSON.stringify({ isSuccessful: false, message: "No signature" }),
-          { status: 400, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      let event: Stripe.Event | undefined = undefined;
-
-      try {
-        event = await stripe.webhooks.constructEventAsync(
-          rawBodyString,
-          stripeSignature,
-          stripeWebhookSigningSecret,
-        );
-      } catch (err) {
-        console.warn(`Error web hook`, err);
-        return new Response(`webhook error ${String(err)}`, { status: 400 });
-      }
-
-      if (event.type === "checkout.session.completed") {
-        const {
-          payment_status,
-          mode,
-          amount_total,
-          payment_link,
-          customer_details,
-          currency,
-        } = event.data.object;
-
-        if (payment_link !== env.STRIPE_PAYMENT_LINK_ID) {
-          return new Response("No payment link found", { status: 400 });
-        }
-
-        if (payment_status !== "paid" || !amount_total) {
-          return new Response("Payment not paid yet", { status: 400 });
-        }
-
-        if (!customer_details) {
-          return new Response("No customer details provided", { status: 400 });
-        }
-
-        if (mode === "subscription" || mode === "setup") {
-          return new Response("Not supported yet", { status: 400 });
-        }
-
-        if (amount_total < 50) {
-          // NB: Could also check currency here
-          return new Response("Paid less than $0.50", { status: 400 });
-        }
-
-        const { email, name } = customer_details;
-
-        // Update user record with subscription status
-        if (email) {
-          // Try to find user with this email
-          try {
-            // Find users with X profile that matches this email
-            const usersResult = await client.query(
-              "SELECT * FROM users WHERE username = ?",
-              {},
-              // Simple matching heuristic - could be improved
-              email.split("@")[0],
-            );
-
-            if (
-              usersResult.ok &&
-              usersResult.json &&
-              usersResult.json.length > 0
-            ) {
-              const user = usersResult.json[0];
-
-              // Update user with subscription info
-              await client.update(
-                "users",
-                {
-                  has_subscription: true,
-                  subscription_status: "active",
-                },
-                { id: user.id },
-              );
-
-              return new Response(
-                JSON.stringify({
-                  success: true,
-                  message: `User ${name} (${email}) subscription activated`,
-                }),
-                { headers: { "Content-Type": "application/json" } },
-              );
-            }
-          } catch (error) {
-            console.error("Error updating user subscription:", error);
-          }
-        }
-
-        // If we couldn't find a matching user or there was an error
-        return new Response(
-          JSON.stringify({
-            success: true,
-            message: `Payment processed for ${name} <${email}> (${amount_total} cents), but couldn't find matching user account.`,
-          }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      }
-
-      // subscription type events
-      if (
-        event.type === "customer.subscription.deleted" ||
-        event.type === "customer.subscription.updated" ||
-        event.type === "customer.subscription.paused"
-      ) {
-        const subscription = event.data.object;
-        const customer = subscription.customer as string;
-        const shouldRemoveSubscription =
-          subscription.status === "unpaid" ||
-          subscription.status === "canceled";
-
-        try {
-          // Find customer by Stripe ID
-          // This is simplified - you would need to store Stripe customer IDs in your users table
-          if (shouldRemoveSubscription) {
-            // You would update the user's subscription status here
-            // For now, we'll just return a success response
-            return new Response(
-              JSON.stringify({
-                success: true,
-                message: "Subscription cancelled",
-              }),
-              { headers: { "Content-Type": "application/json" } },
-            );
-          }
-        } catch (error) {
-          console.error("Error handling subscription event:", error);
-        }
-
-        return new Response("OK. No action required");
-      }
-
-      // Not interested in all other events...
-      return new Response(
-        JSON.stringify({ isSuccessful: false, message: "Invalid event" }),
-        { status: 404 },
-      );
-    }
 
     // X Login routes
     if (url.pathname === "/login") {

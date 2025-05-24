@@ -1,6 +1,6 @@
 This is a template (under 5k tokens in size), made from first principles, for:
 
-[![janwilmake/xymake.template context](https://badge.forgithub.com/janwilmake/xymake.template)](https://uithub.com/janwilmake/xymake.oauth-stripe-template)
+[![janwilmake/xymake.template context](https://badge.forgithub.com/janwilmake/xymake.template?lines=false)](https://uithub.com/janwilmake/xymake.oauth-stripe-template?lines=false)
 
 - Secure login via X OAuth
 - User managment via dorm (powered by [outerbase](https://outerbase.com))

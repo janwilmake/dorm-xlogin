@@ -1,7 +1,6 @@
 {
   "dependencies": {
-    "dormroom": "^1.0.0-next.20",
-    "stripe": "^18.0.0"
+    "dormroom": "^1.0.0-next.20"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250417.0"

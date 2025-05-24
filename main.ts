@@ -1,4 +1,7 @@
-import { DORM, createClient } from "dormroom/DORM";
+/// <reference types="@cloudflare/workers-types" />
+/// <reference lib="es2021" />
+//@ts-check
+import { DORM, createClient } from "dormroom";
 
 export { DORM };
 export interface Env {
@@ -6,7 +9,7 @@ export interface Env {
   X_CLIENT_SECRET: string;
   X_REDIRECT_URI: string;
   LOGIN_REDIRECT_URI: string;
-  X_LOGIN_DO: DurableObjectNamespace;
+  DORM_NAMESPACE: DurableObjectNamespace<DORM>;
 }
 
 export const html = (strings: TemplateStringsArray, ...values: any[]) => {
@@ -52,27 +55,25 @@ function getCookieValue(
   return matches ? decodeURIComponent(matches[1]) : null;
 }
 
-const config = {
-  statements: [
-    `
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    username TEXT NOT NULL,
-    name TEXT,
-    profile_image_url TEXT,
-    access_token TEXT NOT NULL,
-    refresh_token TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    has_subscription BOOLEAN DEFAULT FALSE,
-    subscription_status TEXT
-  )
-  `,
-  ],
-  version: "v2",
-};
-
 const ROOT_DB_NAME = "db:root";
+
+const migrations = {
+        // initial version
+        1: [
+    `
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      name TEXT,
+      profile_image_url TEXT,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    `,
+  ],
+      }
 
 export default {
   fetch: async (request: Request, env: Env, ctx: ExecutionContext) => {
@@ -92,16 +93,18 @@ export default {
       });
     }
 
-    // TODO: Make DORM in a way that this logic isn't so complex. Connection with middleware should be more staight forward for the admin
-    // We want to use the userID db if the prefix is /admin/[id]
+    // Initialize DORM client for user database
     const dbName = url.pathname.startsWith("/admin/")
       ? url.pathname.split("/")[2]
       : undefined;
     const prefix = `/admin/${dbName}`;
 
     // Initialize DORM client for user database
-    const client = createClient(env.X_LOGIN_DO, config, {
-      ctx,
+    const client = createClient({
+      doNamespace: env.DORM_NAMESPACE,
+      version: "v2", // Version prefix for migrations
+      migrations,
+      ctx, // Pass execution context for waitUntil
       name: dbName || userId || ROOT_DB_NAME,
       mirrorName:
         dbName !== ROOT_DB_NAME
@@ -109,7 +112,6 @@ export default {
           : userId
             ? ROOT_DB_NAME
             : undefined,
-      locationHint: userId ? undefined : "enam",
     });
 
     // Handle DB middleware requests (for exploring the DB)
@@ -140,11 +142,11 @@ export default {
 
       headers.append(
         "Set-Cookie",
-        `x_oauth_state=${state}; HttpOnly; Domain=xymake.com; Path=/; Secure; SameSite=Lax; Max-Age=600`,
+        `x_oauth_state=${state}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=600`,
       );
       headers.append(
         "Set-Cookie",
-        `x_code_verifier=${codeVerifier}; HttpOnly; Domain=xymake.com; Path=/; Secure; SameSite=Lax; Max-Age=600`,
+        `x_code_verifier=${codeVerifier}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=600`,
       );
 
       return new Response("Redirecting", {
@@ -234,51 +236,44 @@ export default {
           throw new Error(`X API error: no ID found`);
         }
 
-        // NB: Gotta recreate client since we need to connect with the userId unique db, with root as mirror
-        const userClient = createClient(env.X_LOGIN_DO, config, {
+        // Create a client for this specific user
+        const userClient = createClient({
+          doNamespace: env.DORM_NAMESPACE,
+          version: "v2",
+          migrations,
           ctx,
           name: String(id),
           mirrorName: ROOT_DB_NAME,
         });
 
-        // Store or update user in database
-        const existingUserResult = await userClient.select("users", { id });
+        // Check if user exists in database
+        const existingUser = await userClient.exec(
+          "SELECT * FROM users WHERE id = ?",
+          id
+        ).one().catch(() => null);
 
-        if (
-          existingUserResult.ok &&
-          existingUserResult.json &&
-          existingUserResult.json.length > 0
-        ) {
-          // Update existing user with new tokens and login time
-          // Preserve subscription status if it exists
-          const existingUser = existingUserResult.json[0];
-
-          const result = await userClient.update(
-            "users",
-            {
-              access_token,
-              refresh_token: refresh_token || null,
-              name,
-              profile_image_url,
-              last_login: new Date().toISOString(),
-              // Keep existing subscription status if it exists
-              has_subscription: existingUser.has_subscription || false,
-              subscription_status: existingUser.subscription_status || null,
-            },
-            { id },
+        if (existingUser) {
+          // Update existing user
+          await userClient.exec(
+            "UPDATE users SET access_token = ?, refresh_token = ?, name = ?, profile_image_url = ?, last_login = ? WHERE id = ?",
+            access_token,
+            refresh_token || null,
+            name,
+            profile_image_url,
+            new Date().toISOString(),
+            id
           );
         } else {
           // Create new user
-          const insert = await userClient.insert("users", {
+          await userClient.exec(
+            "INSERT INTO users (id, username, name, profile_image_url, access_token, refresh_token) VALUES (?, ?, ?, ?, ?, ?)",
             id,
             username,
             name,
             profile_image_url,
             access_token,
-            refresh_token: refresh_token || null,
-            has_subscription: false,
-            subscription_status: null,
-          });
+            refresh_token || null
+          );
         }
 
         const headers = new Headers({
@@ -291,21 +286,21 @@ export default {
           "Set-Cookie",
           `x_access_token=${encodeURIComponent(
             access_token,
-          )}; HttpOnly; Domain=xymake.com; Path=/; Secure; SameSite=Lax; Max-Age=34560000`,
+          )}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=34560000`,
         );
         headers.append(
           "Set-Cookie",
           `x_user_id=${encodeURIComponent(
             id,
-          )}; HttpOnly; Domain=xymake.com; Path=/; Secure; SameSite=Lax; Max-Age=34560000`,
+          )}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=34560000`,
         );
         headers.append(
           "Set-Cookie",
-          `x_oauth_state=; Domain=xymake.com; Max-Age=0; Path=/`,
+          `x_oauth_state=; Max-Age=0; Path=/`,
         );
         headers.append(
           "Set-Cookie",
-          `x_code_verifier=; Domain=xymake.com; Max-Age=0; Path=/`,
+          `x_code_verifier=; Max-Age=0; Path=/`,
         );
 
         return new Response("Redirecting", {
@@ -325,10 +320,6 @@ export default {
                 <p>
                   ${error instanceof Error ? error.message : "Unknown error"}
                 </p>
-                <script>
-                  setTimeout(() => (window.location.href = "/"), 5000);
-                </script>
-                <p>Redirecting to homepage in 5 seconds...</p>
                 <a href="/">Return to homepage</a>
               </body>
             </html>
@@ -337,7 +328,7 @@ export default {
             status: 500,
             headers: {
               "Content-Type": "text/html",
-              "Set-Cookie": `x_oauth_state=; Domain=xymake.com; Max-Age=0; Path=/, x_code_verifier=; Max-Age=0; Domain=xymake.com; Path=/`,
+              "Set-Cookie": `x_oauth_state=; Max-Age=0; Path=/, x_code_verifier=; Max-Age=0; Path=/`,
               ...getCorsHeaders(),
             },
           },
@@ -349,10 +340,10 @@ export default {
     if (url.pathname === "/logout") {
       // Update last_login in the database if we have the user ID
       if (userId) {
-        await client.update(
-          "users",
-          { last_login: new Date().toISOString() },
-          { id: userId },
+        await client.exec(
+          "UPDATE users SET last_login = ? WHERE id = ?",
+          new Date().toISOString(),
+          userId
         );
       }
 
@@ -363,11 +354,11 @@ export default {
 
       headers.append(
         "Set-Cookie",
-        "x_access_token=; Max-Age=0; Domain=xymake.com; Path=/; HttpOnly; Secure; SameSite=Lax",
+        "x_access_token=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax",
       );
       headers.append(
         "Set-Cookie",
-        "x_user_id=; Max-Age=0; Domain=xymake.com; Path=/; HttpOnly; Secure; SameSite=Lax",
+        "x_user_id=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax",
       );
 
       return new Response("Logging out...", { status: 302, headers });
@@ -387,130 +378,78 @@ export default {
       }
 
       // Try to get user data from database with matching access_token
+      const userData = await client.exec(
+        "SELECT * FROM users WHERE id = ? AND access_token = ?",
+        userId,
+        accessToken
+      ).one().catch(() => null);
 
-      const dbUserResult = await client.select("users", {
-        id: userId,
-        access_token: accessToken,
-      });
-
-      if (!dbUserResult.ok || !dbUserResult.json?.length) {
+      if (!userData) {
         return new Response("Redirecting to login...", {
           status: 302,
           headers: { Location: "/login", ...getCorsHeaders() },
         });
       }
 
-      const userData = dbUserResult.json[0];
-
-      // Stripe payment button HTML - you'll add your own keys
-      const stripeButton = `
-          <div class="mt-8 max-w-md mx-auto">
-            <h3 class="text-xl font-semibold mb-4 ${
-              userData.has_subscription ? "text-green-400" : ""
-            }">
-              ${
-                userData.has_subscription
-                  ? "✓ Premium Subscription Active"
-                  : "Upgrade to Premium"
-              }
-            </h3>
-            ${
-              !userData.has_subscription
-                ? `
-              <div class="x-border bg-slate-700 rounded-xl p-6 mb-6">
-                <p class="mb-4">Get exclusive features with a premium membership:</p>
-                <ul class="list-disc pl-5 mb-6 text-slate-300">
-                  <li>Advanced analytics</li>
-                  <li>Custom profile themes</li>
-                  <li>Priority support</li>
-                </ul>
-                <div id="stripe-button-container">
-                   <div class="mb-8">
-            <stripe-buy-button buy-button-id="buy_btn_1REsM3HdjTpW3q7ir46YIEPf"
-                publishable-key="pk_live_51OByVPHdjTpW3q7iqVMf1htAJOQ9If61YZYQlDMc2vhx0XSgqu4Tpfpb6t4pRFJDWhJ7ZqdwMsnQn9RtDuztnnQA00NorRRKLl">
-            </stripe-buy-button>
-        </div>
-
-                </div>
-              </div>
-            `
-                : ""
-            }
-          </div>
-        `;
-
       return new Response(
         html`
           <!DOCTYPE html>
-          <html lang="en" class="bg-slate-900">
+          <html>
             <head>
-              <script
-                async
-                src="https://js.stripe.com/v3/buy-button.js"
-              ></script>
-              <meta charset="utf8" />
-              <script src="https://cdn.tailwindcss.com"></script>
               <title>X User Dashboard</title>
               <style>
-                @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
-                body {
-                  font-family: "Inter", sans-serif;
-                }
-                .x-border {
-                  border: 1px solid rgba(255, 255, 255, 0.1);
-                }
+                body { font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
+                img { border-radius: 50%; }
+                .profile { display: flex; gap: 20px; align-items: center; }
+                .btn { display: inline-block; padding: 8px 16px; background: #1DA1F2; color: white; 
+                       text-decoration: none; border-radius: 4px; margin-right: 10px; }
+                .btn-logout { background: #E0245E; }
               </style>
-              <script
-                async
-                src="https://js.stripe.com/v3/buy-button.js"
-              ></script>
             </head>
-            <body class="text-slate-100">
-              <main class="max-w-6xl mx-auto px-4 py-16">
-                <div class="text-center mb-20">
-                  <h1
-                    class="text-5xl font-bold mb-6 bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent"
-                  >
-                    X Dashboard
-                  </h1>
-
-                  <div
-                    class="max-w-md mx-auto bg-slate-800 rounded-xl p-6 mb-8"
-                  >
-                    <div class="flex items-center gap-4">
-                      <img
-                        src="${userData.profile_image_url}"
-                        alt="Profile"
-                        class="w-16 h-16 rounded-full"
-                      />
-                      <div class="text-left">
-                        <h2 class="text-xl font-semibold">${userData.name}</h2>
-                        <p class="text-slate-400">@${userData.username}</p>
-                        ${userData.has_subscription
-                          ? `<p class="text-green-400 mt-1">Premium Member</p>`
-                          : `<p class="text-slate-400 mt-1">Free Plan</p>`}
-                      </div>
-                    </div>
-                  </div>
-
-                  ${stripeButton}
-
-                  <div class="flex justify-center gap-4 mt-8">
-                    <a
-                      href="/"
-                      class="bg-blue-500 hover:bg-blue-600 px-6 py-3 rounded-lg font-medium transition-colors"
-                    >
-                      Home
-                    </a>
-                    <a
-                      href="/logout"
-                      class="border border-blue-500 text-blue-500 px-6 py-3 rounded-lg font-medium hover:bg-blue-500/10 transition-colors"
-                    >
-                      Logout
-                    </a>
-                  </div>
+            <body>
+              <h1>X Dashboard</h1>
+              <div class="profile">
+                <img src="${userData.profile_image_url}" width="64" height="64" alt="Profile">
+                <div>
+                  <h2>${userData.name}</h2>
+                  <p>@${userData.username}</p>
                 </div>
-              </main>
+              </div>
+              <p>Last login: ${new Date(userData.last_login).toLocaleString()}</p>
+              <div>
+                <a href="/" class="btn">Home</a>
+                <a href="/logout" class="btn btn-logout">Logout</a>
+              </div>
+            </body>
+          </html>
+        `,
+        {
+          headers: {
+            "content-type": "text/html",
+            ...getCorsHeaders(),
+          },
+        },
+      );
+    }
+
+    // Default route
+    if (url.pathname === "/" || url.pathname === "") {
+      return new Response(
+        html`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>X OAuth Demo</title>
+              <style>
+                body { font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
+                .btn { display: inline-block; padding: 10px 20px; background: #1DA1F2; color: white; 
+                       text-decoration: none; border-radius: 4px; }
+              </style>
+            </head>
+            <body>
+              <h1>X OAuth Demo</h1>
+              <p>Simple X/Twitter OAuth implementation with DORM SQLite storage</p>
+              <a href="/login" class="btn">Login with X</a>
             </body>
           </html>
         `,

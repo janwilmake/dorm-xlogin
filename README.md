@@ -23,6 +23,8 @@ TODO:
 
 - ✅ Remove stripe webhook into separate handler for now. This'd be a different middleware.
 
+- ✅ updated to use latest dorm version that has migrations and other better stuff
+
 - Make `x-oauth-template` fully oauth2.1 compatible. Use `oauth21-mcp-openapi` as guideline. Make this a middleware that takes the dorm client, and assumes a table structure.
 
 - Implement spec of https://murlprotocol.com with this template as middleware, such that the flow becomes:

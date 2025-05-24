@@ -18,6 +18,10 @@ To use this:
 
 ![](2.png)
 
+You can add as many callbacks as you want!
+
+![](3.png)
+
 - To explore the data in the DB: https://studio.outerbase.com/local/new-base/starbase and fill https://login.xymake.com/admin
 - [Find me on X if you have any questions](https://x.com/janwilmake)
 

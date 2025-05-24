@@ -6,7 +6,7 @@
   "dev": { "port": 3000 },
   "route": { "custom_domain": true, "pattern": "login.xymake.com" },
   "durable_objects": {
-    "bindings": [{ "name": "X_LOGIN_DO", "class_name": "DORM" }]
+    "bindings": [{ "name": "DORM_NAMESPACE", "class_name": "DORM" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DORM"] }],
   "vars": {

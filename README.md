@@ -4,9 +4,8 @@ This is a template (under 5k tokens in size), made from first principles, for:
 
 - Secure login via X OAuth
 - User managment via dorm (powered by [outerbase](https://outerbase.com))
-- Stripe payment processing (powered by [stripeflare](https://github.com/janwilmake/stripeflare))
 
-Use this boilerplate fore easy creation of apps with subscribers or features behind one-time payment.
+Use this boilerplate fore easy creation of apps that require X login
 
 To use this:
 
@@ -20,18 +19,11 @@ To use this:
 TODO:
 
 - ✅ successfully have one db per user but with a global mirror-db
-
 - ✅ Remove stripe webhook into separate handler for now. This'd be a different middleware.
-
-- ✅ updated to use latest dorm version that has migrations and other better stuff
-
+- ✅ updated to use latest dorm version that has migrations and other better stuff. Removed stripe from template
 - Make `x-oauth-template` fully oauth2.1 compatible. Use `oauth21-mcp-openapi` as guideline. Make this a middleware that takes the dorm client, and assumes a table structure.
-
 - Implement spec of https://murlprotocol.com with this template as middleware, such that the flow becomes:
-
   - x login -> stripe payment -> dashboard with balance
   - login with monetaryurl with permissions
-
 - from uithub dashboard, add monetaryurl full permission to balance via xlogin --> stripe payment
-
 - when an uithub request is made, a murl is made first and send along into the url chain. every server deducts the desired balance afterwards.

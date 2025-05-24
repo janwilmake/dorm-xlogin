@@ -18,7 +18,7 @@ To use this:
 
 ![](2.png)
 
-You can add as many callbacks as you want!
+You can add as many callbacks as you want (for all your X oauthed workers)!
 
 ![](3.png)
 
